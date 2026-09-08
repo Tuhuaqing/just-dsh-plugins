@@ -1,6 +1,6 @@
 {
   "name": "dsh-auto-update",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "自动检测并更新 DeepSeek Harness（dsh）的插件：侧边栏显示当前版本，一键 npm install -g 更新并跨平台重启。",
   "type": "module",
   "license": "Apache-2.0",
