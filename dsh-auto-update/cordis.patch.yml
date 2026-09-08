@@ -1,0 +1,6 @@
+# dsh-auto-update profile patch layer — insert one loader entry for the plugin package.
+# 该条目是一个普通 cordis loader 条目（id + 包名）；browser 半边由 dsh-client-modules
+# 通过 package.json 的 dsh.client 声明自动加载（/plugins/dsh-auto-update/client.js）。
+- insert:
+    - id: dsh-auto-update
+      name: 'dsh-auto-update'

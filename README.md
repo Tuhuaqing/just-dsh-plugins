@@ -1,16 +1,6 @@
 # just-dsh-plugins
 
-DeepSeek Harness（DSH / Cordis）动态插件集合。
-
-本仓库汇总了一系列 DSH 插件，每个子目录都是一个独立、自包含的插件，遵循 DSH 动态
-Cordis 插件规范（Host / Client 两半代码）。
-
-## 目录规范
-
-- 每个插件对应一个子文件夹，文件夹名以 `dsh-` 开头（例如 `dsh-auto-update`）。
-- 每个插件目录内包含自身的源码、配置与文档，彼此独立、互不影响。
-- 插件的 `host.js` / `client.js` 分别对应 DSH 动态插件的 `code.host` / `code.client`，
-  每个文件是一个「返回 Cordis Plugin 的函数体」。
+基于Cordis思想实现的一组超绝的DSH插件
 
 ## 插件列表
 
@@ -38,12 +28,6 @@ dsh plugin add ./dsh-auto-update
 ```
 
 安装后即可热加载生效。
-
-## 新增插件
-
-1. 在仓库根目录新建以 `dsh-` 开头的文件夹。
-2. 在其中放入 `host.js`、`client.js` 与 `README.md`。
-3. 更新本文件的「插件列表」。
 
 ## 许可证
 
