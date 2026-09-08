@@ -3,7 +3,15 @@
   "version": "0.1.0",
   "description": "自动检测并更新 DeepSeek Harness（dsh）的插件：侧边栏显示当前版本，一键 npm install -g 更新并跨平台重启。",
   "type": "module",
-  "license": "MIT",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Tuhuaqing/just-dsh-plugins.git",
+    "directory": "plugins/dsh-auto-update"
+  },
+  "engines": {
+    "node": ">=18"
+  },
   "main": "lib/index.js",
   "exports": {
     ".": {
@@ -18,6 +26,12 @@
     "lib",
     "cordis.patch.yml"
   ],
+  "scripts": {
+    "prepublishOnly": "node --check lib/index.js && node --check lib/client.js"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "keywords": [
     "dsh",
     "deepseek-harness",

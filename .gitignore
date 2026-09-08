@@ -46,3 +46,6 @@ Thumbs.db
 .npm/
 .eslintcache
 coverage/
+
+# ---- Reference docs (third-party, not part of the plugin) ----
+插件收录规范.md
