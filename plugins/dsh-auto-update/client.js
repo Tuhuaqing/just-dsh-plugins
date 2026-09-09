@@ -4,8 +4,11 @@
 // 加载，并通过 vendored cordis Loader 的 lazy-CJS 模块表执行 window.__ModuleLoader__.load。
 // 工厂体是纯 CJS，require() 解析到 shell 的模块表（平台 seed 词 + 已注册的 client bundle）。
 
+// 注册 id 必须等于完整 npm 包名：client-modules 用启动图行 id（即包名）
+// 去 factories 表里查工厂，注册用裸名会导致 "loaded without registering
+// @just-ai/dsh-auto-update via __ModuleLoader__.load" 而无法装载。
 window.__ModuleLoader__.load({
-  id: "dsh-auto-update",
+  id: "@just-ai/dsh-auto-update",
   factory: (require) => {
     var module = { exports: {} };
     var exports = module.exports;
