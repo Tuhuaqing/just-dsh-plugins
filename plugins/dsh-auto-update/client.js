@@ -59,7 +59,7 @@ window.__ModuleLoader__.load({
     }
 
     function apply(ctx) {
-      // 渲染进“设置”按钮内部：齿轮图标 + “设置”标签靠左，版本号 + 更新/重启按钮靠右
+      // 渲染进“设置”按钮内部：齿轮图标 + “设置”标签靠左，版本号 +（有更新时）更新按钮靠右
       function TriggerContent(props) {
         var wide = props.wide;
         var t = props.t;
@@ -84,30 +84,24 @@ window.__ModuleLoader__.load({
           return ctx.interval(refresh, POLL_INTERVAL_MS);
         }, []);
 
+        // 点「更新」= 一步到位：安装最新版并在成功后自动重启，无需再点第二次。
         function onUpdate(e) {
           if (e && e.stopPropagation) {
             e.stopPropagation();
             e.preventDefault();
           }
           setBusy(true);
-          callHost("installUpdate")
-            .catch(function () {})
-            .then(function () {
-              refresh();
-              setBusy(false);
-            });
-        }
-
-        function onRestart(e) {
-          if (e && e.stopPropagation) {
-            e.stopPropagation();
-            e.preventDefault();
-          }
-          setBusy(true);
-          callHost("restart")
-            .catch(function () {})
-            .then(function () {
-              setBusy(false);
+          callHost("updateAndRestart")
+            .then(function (res) {
+              // 安装失败（未重启）时才结束 busy 让用户重试；
+              // 成功时进程即将重启，保持 spinner 直到页面因重启而断开（此响应可能收不到）。
+              if (!res || !res.ok) {
+                refresh();
+                setBusy(false);
+              }
+            })
+            .catch(function () {
+              // 请求中断很可能是重启已生效导致连接断开：保持 spinner，页面重启后会自然恢复
             });
         }
 
@@ -116,19 +110,22 @@ window.__ModuleLoader__.load({
 
         var current = status.current;
         var phase = status.phase;
-        var installing = phase === "installing" || busy;
-        var installed = phase === "installed";
+        // 进行中：安装中 / 安装完成待重启 / 重启中，统一显示 spinner。
+        // 「更新」按钮已经把「更新 + 重启」一并完成，因此不再有独立的「重启」按钮。
+        var installing =
+          phase === "installing" ||
+          phase === "installed" ||
+          phase === "restarting" ||
+          busy;
         var showUpdate = phase === "idle" && status.updateAvailable && !busy;
 
         var button = null;
         if (installing) {
           button = React.createElement(
             "button",
-            { type: "button", className: "dsh-au-btn", disabled: true, "aria-label": "安装中" },
+            { type: "button", className: "dsh-au-btn", disabled: true, "aria-label": "更新中" },
             React.createElement("span", { className: "dsh-au-spinner" }),
           );
-        } else if (installed) {
-          button = React.createElement("button", { type: "button", className: "dsh-au-btn", onClick: onRestart }, "重启");
         } else if (showUpdate) {
           button = React.createElement("button", { type: "button", className: "dsh-au-btn", onClick: onUpdate }, "更新");
         }

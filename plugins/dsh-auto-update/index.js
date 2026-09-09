@@ -233,7 +233,7 @@ export function apply(ctx) {
   const state = {
     current: null,
     latest: null,
-    phase: "checking", // checking | idle | installing | installed | error
+    phase: "checking", // checking | idle | installing | installed | restarting | error
     error: null,
     os: null, // 'windows' | 'macos' | 'linux'
   };
@@ -348,6 +348,28 @@ export function apply(ctx) {
     }
   }
 
+  // 一步到位：先安装最新版，安装成功后立即下发重启，无需前端二次点击。
+  // 注意：restart 会杀掉当前进程，所以只有在 install 成功后才下发；install 失败则直接返回错误、不重启。
+  async function updateAndRestart() {
+    const installResult = await installUpdate();
+    if (!installResult || !installResult.ok) {
+      // 安装失败：phase 已在 installUpdate 里回退为 idle，直接把错误抛回前端
+      return installResult || { ok: false, error: "install failed" };
+    }
+    // 安装成功，进入“重启中”态（前端据此持续显示 spinner），随后下发脱离式重启脚本
+    state.phase = "restarting";
+    console.log("[dsh-auto-update] 安装完成，自动下发重启指令");
+    const restartResult = await restart();
+    if (!restartResult || !restartResult.ok) {
+      // 重启下发失败：回退到 idle（重新显示「更新」按钮，让用户整体重试）。
+      // 不再回退到 installed，因为已移除独立的「重启」按钮。
+      state.phase = "idle";
+      return { ok: false, error: (restartResult && restartResult.error) || "restart failed" };
+    }
+    // 下发成功；当前进程即将被重启脚本杀掉，这个响应可能来不及送达前端（正常现象）
+    return { ok: true };
+  }
+
   // —— 供 browser half 调用的 RPC 路由 ——
   ctx.webServer.register({
     kind: "exact",
@@ -358,6 +380,7 @@ export function apply(ctx) {
       let result;
       if (body.method === "getStatus") result = getStatus();
       else if (body.method === "installUpdate") result = await installUpdate();
+      else if (body.method === "updateAndRestart") result = await updateAndRestart();
       else if (body.method === "restart") result = await restart();
       else result = { ok: false, error: "unknown method: " + body.method };
       sendJson(res, 200, result);
