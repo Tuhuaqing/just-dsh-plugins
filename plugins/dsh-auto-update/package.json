@@ -12,22 +12,23 @@
   "engines": {
     "node": ">=18"
   },
-  "main": "lib/index.js",
+  "main": "index.js",
   "exports": {
     ".": {
-      "default": "./lib/index.js"
+      "default": "./index.js"
     },
     "./client": {
-      "default": "./lib/client.js"
+      "default": "./client.js"
     },
     "./package.json": "./package.json"
   },
   "files": [
-    "lib",
+    "index.js",
+    "client.js",
     "cordis.patch.yml"
   ],
   "scripts": {
-    "prepublishOnly": "node --check lib/index.js && node --check lib/client.js"
+    "prepublishOnly": "node --check index.js && node --check client.js"
   },
   "publishConfig": {
     "access": "public"

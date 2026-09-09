@@ -34,10 +34,13 @@ dsh plugin --profile web add ./plugins/dsh-auto-update
 dsh-auto-update/
 ├── package.json        # 声明 dsh.bundle.patch + dsh.client
 ├── cordis.patch.yml    # 挂载条目（insert：id + 包名）
-└── lib/
-    ├── index.js        # Host 半边：ESM 模块，export { name, inject, apply }
-    └── client.js       # Client 半边：浏览器 bundle（window.__ModuleLoader__.load）
+├── index.js            # Host 半边：ESM 模块，export { name, inject, apply }
+└── client.js           # Client 半边：浏览器 bundle（window.__ModuleLoader__.load）
 ```
+
+> 本插件为纯手写 JS、无构建步骤，故入口按官方 bundle 最简范式直接放在包根目录
+> （对照[打包与安装插件](https://deepseek-harness.github.io/deepseek-harness/develop/basic/publish)
+> 的 `hello-plugin` 示例）。`lib/` 在 dsh 约定中指由 `src/` 构建出的产物目录，此处不适用。
 
 ## 工作原理
 
@@ -61,6 +64,6 @@ dsh-auto-update/
 ## 注意事项
 
 - 「最新版本」取自 npm 的 `latest` dist-tag，即 `npm install -g @deepseek-ai/dsh` 会安装的版本。
-  若你使用 `next` 等预发布通道，可自行将 `lib/index.js` 中的 `DIST_TAG` 改为对应 tag。
+  若你使用 `next` 等预发布通道，可自行将 `index.js` 中的 `DIST_TAG` 改为对应 tag。
 - 版本比较使用 semver（`compareVersions`）：仅当 `latest > current`（最新版更高）时才提示更新，
   避免跨通道 / 预发布导致的降级。
