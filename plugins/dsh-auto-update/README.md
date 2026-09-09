@@ -62,7 +62,10 @@ dsh-auto-update/
 
 ## 注意事项
 
-- 「最新版本」取自 npm 的 `latest` dist-tag，即 `npm install -g @deepseek-ai/dsh` 会安装的版本。
-  若你使用 `next` 等预发布通道，可自行将 `index.js` 中的 `DIST_TAG` 改为对应 tag。
+- 「最新版本」取自 npm 的 `DIST_TAG` dist-tag（默认 `latest`），检测与安装始终锁定同一通道：
+  即检测到的版本，就是 `npm install -g @deepseek-ai/dsh@<DIST_TAG>` 会安装的版本。
+  改 `index.js` 中的 `DIST_TAG` 即可切换通道，例如 `next`（预发布）、`alpha`（内测）；
+  dist-tag 是任意字符串标签，`beta` / `rc` 等（含官方未来新增的）也自动兼容，
+  只需保证该 tag 在 npm 上确实存在，否则检测会报错而非误报更新。
 - 版本比较使用 semver（`compareVersions`）：仅当 `latest > current`（最新版更高）时才提示更新，
   避免跨通道 / 预发布导致的降级。

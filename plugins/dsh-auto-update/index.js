@@ -10,7 +10,13 @@ export const name = "dsh-auto-update";
 export const inject = ["timer", "shell", "webServer"];
 
 const PACKAGE = "@deepseek-ai/dsh";
-const DIST_TAG = "latest";
+// 发布通道（npm dist-tag）。检测「最新版」与执行更新都用它，二者始终锁定同一通道：
+//   latest —— 正式发布通道（默认）
+//   next   —— 预发布 / 下一版通道
+//   alpha  —— 内测通道
+// dist-tag 是任意字符串标签，此处不做枚举，故 beta / rc / canary 等（含官方未来新增的）
+// 任意 tag 均自动兼容；只需保证该 tag 在 npm 上确实存在，否则检测会报错而非误报更新。
+const DIST_TAG = "alpha";
 const CHECK_INTERVAL_MS = 30 * 60 * 1000;
 const PORT = 3080;
 
@@ -262,7 +268,12 @@ export function apply(ctx) {
   }
 
   async function readLatestVersion() {
-    const r = await runCommand("npm view " + PACKAGE + " version", 60000);
+    // 检测与安装保持同一通道：查询 DIST_TAG 当前指向的版本。
+    // npm 把 dist-tag 当作任意字符串标签，故 latest / next / alpha / beta / rc 等
+    // 任意（含未来新增）tag 都自动兼容，无需在此枚举。
+    // 若 DIST_TAG 指向的 tag 不存在，npm view 返回 E404 → runCommand.ok=false → 抛错，
+    // 由 check() 捕获并进入 error 态，而非误报更新。
+    const r = await runCommand("npm view " + PACKAGE + "@" + DIST_TAG + " version", 60000);
     if (!r.ok) throw new Error(r.stderr || "npm view failed");
     return normalizeVersion(firstLine(r.stdout));
   }
