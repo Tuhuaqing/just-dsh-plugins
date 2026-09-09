@@ -14,6 +14,13 @@ const DIST_TAG = "latest";
 const CHECK_INTERVAL_MS = 30 * 60 * 1000;
 const PORT = 3080;
 
+// —— 调试开关 ——
+// 为 true 时，readCurrentVersion 直接返回一个很老的假版本号（DSH_AUTO_UPDATE_DEBUG_VERSION），
+// 从而让 latest > current 恒成立，client.js 始终显示「更新」按钮，便于本地测试整条更新流程。
+// 上线前务必改回 false。
+const DSH_AUTO_UPDATE_DEBUG = true;
+const DSH_AUTO_UPDATE_DEBUG_VERSION = "0.0.1";
+
 // —— semver 解析与比较：仅当 latest > current 才判定“有更新”，避免跨通道/预发布导致降级 ——
 
 function normalizeVersion(v) {
@@ -77,7 +84,22 @@ function toUtf16leBase64(str) {
   return btoa(bin);
 }
 
-// Unix 系（Linux / macOS / 其它 unix）共享的重启脚本主体
+// 把 UTF-8 字符串编码为标准 base64（用于把脚本安全塞进命令行，规避所有引号/转义问题）
+function toUtf8Base64(str) {
+  const bytes = new TextEncoder().encode(str);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+
+// Unix 系（Linux / macOS / 其它 unix）共享的重启脚本主体。
+// 关键点（对齐 ~/.zshrc 的 dsh-rs，修复 EADDRINUSE）：
+//   1. 只杀真正 LISTEN 3080 的进程，绝不误杀浏览器等仅连到 3080 的客户端；
+//   2. LISTEN 进程可能有多个，逐个 kill，不能只 head -n1；
+//   3. kill 后轮询等待端口“真正释放”再启动，避免固定 sleep 造成的竞态；
+//   4. 优雅 kill 不掉再 kill -9 兜底；确认空闲后才拉起新进程。
+// 本脚本由当前 dsh web 进程经 setsid/nohup 脱离后运行，会杀掉派生它的父进程（旧 dsh），
+// 因此必须等端口释放后再启动，否则新旧交接期会 address already in use。
 function unixRestartScript() {
   return [
     "port=" + PORT,
@@ -85,20 +107,38 @@ function unixRestartScript() {
     'log_file="$log_dir/dsh.log"',
     'mkdir -p "$log_dir"',
     "sleep 2",
-    'pid=$(lsof -ti:"$port" 2>/dev/null | head -n1)',
-    'if [ -z "$pid" ]; then',
-    '  pid=$(fuser "$port"/tcp 2>/dev/null | cut -d: -f2 | tr -d " ")',
-    "fi",
-    'if [ -n "$pid" ]; then',
-    '  echo "[$(date "+%F %T")] killing pid $pid on port $port" >> "$log_file"',
-    "  kill $pid 2>/dev/null",
-    "  sleep 1",
-    '  if kill -0 $pid 2>/dev/null; then',
-    '    kill -9 $pid 2>/dev/null',
-    '    echo "[$(date "+%F %T")] force killed $pid" >> "$log_file"',
+    // 只取 LISTEN 的 PID（排除浏览器/客户端连接），可能多个
+    'listen_pids() { lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null; }',
+    'pids=$(listen_pids)',
+    'if [ -n "$pids" ]; then',
+    '  echo "[$(date "+%F %T")] killing listen pids: $(echo $pids | tr "\\n" " ")on port $port" >> "$log_file"',
+    '  for pid in $pids; do kill "$pid" 2>/dev/null; done',
+    // 轮询等待端口释放，最多约 10 秒
+    "  i=0",
+    '  while [ "$i" -lt 20 ]; do',
+    '    [ -z "$(listen_pids)" ] && break',
+    "    sleep 0.5",
+    "    i=$((i+1))",
+    "  done",
+    // 仍占用则强杀，再等一轮
+    '  pids=$(listen_pids)',
+    '  if [ -n "$pids" ]; then',
+    '    echo "[$(date "+%F %T")] force killing: $(echo $pids | tr "\\n" " ")" >> "$log_file"',
+    '    for pid in $pids; do kill -9 "$pid" 2>/dev/null; done',
+    "    i=0",
+    '    while [ "$i" -lt 20 ]; do',
+    '      [ -z "$(listen_pids)" ] && break',
+    "      sleep 0.5",
+    "      i=$((i+1))",
+    "    done",
     "  fi",
     "else",
-    '  echo "[$(date "+%F %T")] no process on port $port" >> "$log_file"',
+    '  echo "[$(date "+%F %T")] no listening process on port $port" >> "$log_file"',
+    "fi",
+    // 端口确实空闲后再启动，避免 EADDRINUSE 竞态
+    'if [ -n "$(listen_pids)" ]; then',
+    '  echo "[$(date "+%F %T")] port $port still in use, aborting start" >> "$log_file"',
+    "  exit 1",
     "fi",
     'echo "[$(date "+%F %T")] starting dsh web" >> "$log_file"',
     'nohup dsh web --no-open >> "$log_file" 2>&1 &',
@@ -114,8 +154,13 @@ function windowsRestartScript() {
     '$log=Join-Path $env:USERPROFILE "dsh.log"',
     'Add-Content -LiteralPath $log -Value ("[" + (Get-Date -Format "yyyy-MM-dd HH:mm:ss") + "] restarting on port " + $port)',
     "Start-Sleep -Seconds 2",
+    // 只结束真正 LISTEN 端口的进程（可能多个），不误伤浏览器等客户端连接
     "Get-NetTCPConnection -LocalPort $port -State Listen | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force }",
-    "Start-Sleep -Seconds 1",
+    // 轮询等待端口“真正释放”再启动，最多约 10 秒，避免固定 sleep 造成的 EADDRINUSE 竞态
+    "$i=0",
+    "while ($i -lt 20) { if (-not (Get-NetTCPConnection -LocalPort $port -State Listen)) { break }; Start-Sleep -Milliseconds 500; $i++ }",
+    // 端口仍被占用则放弃启动，避免报 address already in use
+    'if (Get-NetTCPConnection -LocalPort $port -State Listen) { Add-Content -LiteralPath $log -Value ("[" + (Get-Date -Format "yyyy-MM-dd HH:mm:ss") + "] port " + $port + " still in use, aborting start"); exit 1 }',
     'Add-Content -LiteralPath $log -Value ("[" + (Get-Date -Format "yyyy-MM-dd HH:mm:ss") + "] starting dsh web")',
     'Start-Process -FilePath "dsh" -ArgumentList @("web","--no-open") -WindowStyle Hidden -RedirectStandardOutput $log -RedirectStandardError ($log + ".err")',
   ].join("; ");
@@ -126,10 +171,32 @@ function buildRestartCommand(os) {
   if (os === "windows") {
     return "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand " + toUtf16leBase64(windowsRestartScript());
   }
-  const script = unixRestartScript();
-  // Linux 用 setsid 完全脱离父进程组；macOS 没有 setsid，只用 nohup
-  const detach = os === "macos" ? "nohup bash -c" : "nohup setsid bash -c";
-  return detach + " '" + script + "' >/dev/null 2>&1 < /dev/null &";
+
+  // —— Unix（macOS / Linux / 其它）——
+  // 关键：重启脚本会杀掉派生它的父进程（当前 dsh），而 dsh 的 subprocess 后端在销毁时会对
+  // 它派生的整棵子进程树发 SIGKILL。若脚本没有真正脱离 dsh 的会话/进程组，就会在 kill 掉
+  // dsh 之后被“连坐”杀死（表现为：日志停在 killing，之后再没有 starting）。
+  // macOS 没有 setsid，因此统一用系统自带的 perl 调 POSIX::setsid 新建会话来彻底脱离：
+  //   - fork 后父端立即退出 → ctx.shell.run 秒级返回，dsh 不会再 tree-kill 这个已独立的会话；
+  //   - 子端 setsid() 脱离控制终端与进程组，再 exec bash 执行真正的重启脚本；
+  //   - 脚本内容用 base64 传递，规避一切引号/转义问题。
+  const scriptB64 = toUtf8Base64(unixRestartScript());
+  // perl 单行程序：解码 base64 脚本 → fork（父端立即退出）→ 子端 setsid 脱离 → 用独立 bash 执行脚本。
+  // 注意：整段 perl 程序会被外层单引号 '...' 包裹传给 shell，所以程序体内不能出现任何单引号，
+  // 字符串一律用 perl 的 q{...} 定界（等价单引号字符串，但用花括号，规避引号冲突）。
+  const perlProgram =
+    "use POSIX ();" +
+    "use MIME::Base64 ();" +
+    "my $s = MIME::Base64::decode_base64($ARGV[0]);" +
+    "exit 0 if fork();" +                 // 父端立即退出，命令快速返回
+    "POSIX::setsid();" +                  // 子端新建会话，彻底脱离 dsh 的进程组/控制终端
+    "open(STDIN, q{<}, q{/dev/null});" +
+    "open(STDOUT, q{>}, q{/dev/null});" +
+    "open(STDERR, q{>}, q{/dev/null});" +
+    "exec(q{bash}, q{-c}, $s);";          // 直接 exec bash 执行脚本，无需管道
+
+  // 用单引号包裹 perl 程序（程序体内已无单引号），base64 作为参数（只含 [A-Za-z0-9+/=]，安全）
+  return "perl -e '" + perlProgram + "' '" + scriptB64 + "' </dev/null >/dev/null 2>&1 &";
 }
 
 // —— HTTP 小工具 ——
@@ -184,6 +251,11 @@ export function apply(ctx) {
   const firstLine = (text) => String(text || "").split("\n")[0].trim();
 
   async function readCurrentVersion() {
+    // 调试模式：返回一个很老的假版本号，骗过 client.js 以显示「更新」按钮
+    if (DSH_AUTO_UPDATE_DEBUG) {
+      console.log("[dsh-auto-update] DEBUG 模式：当前版本伪造为 v" + DSH_AUTO_UPDATE_DEBUG_VERSION);
+      return normalizeVersion(DSH_AUTO_UPDATE_DEBUG_VERSION);
+    }
     const r = await runCommand("dsh --version", 15000);
     if (!r.ok) throw new Error(r.stderr || "dsh --version failed");
     return normalizeVersion(firstLine(r.stdout));
