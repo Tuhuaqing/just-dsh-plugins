@@ -1,7 +1,6 @@
 # dsh-auto-update
 
-自动检测并更新 DeepSeek Harness（dsh）的插件。在 dsh web 侧边栏「设置」按钮内靠右显示当前版本，
-发现官方更高版本后一键 `npm install -g` 更新并重启。
+自动检测最新DeepSeek Harness版本, 显示当前版本号, 并提供一键升级按钮。
 
 ## 功能
 
