@@ -18,7 +18,7 @@ const PORT = 3080;
 // 为 true 时，readCurrentVersion 直接返回一个很老的假版本号（DSH_AUTO_UPDATE_DEBUG_VERSION），
 // 从而让 latest > current 恒成立，client.js 始终显示「更新」按钮，便于本地测试整条更新流程。
 // 上线前务必改回 false。
-const DSH_AUTO_UPDATE_DEBUG = true;
+const DSH_AUTO_UPDATE_DEBUG = false;
 const DSH_AUTO_UPDATE_DEBUG_VERSION = "0.0.1";
 
 // —— semver 解析与比较：仅当 latest > current 才判定“有更新”，避免跨通道/预发布导致降级 ——
