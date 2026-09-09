@@ -23,7 +23,8 @@
 以 `dsh-auto-update` 为例：
 
 ```bash
-dsh plugin --profile web add ./plugins/dsh-auto-update
+# DSH更新插件
+dsh plugin --profile web add @just-ai/dsh-auto-update
 ```
 
 安装后即可热加载生效。
