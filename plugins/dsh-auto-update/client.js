@@ -150,9 +150,11 @@ window.__ModuleLoader__.load({
         );
       }
 
-      // 注册到 settings.trigger（“设置”按钮内容插槽），locale 沿用官方 settings 命名空间以拿到 t()
+      // 注册到 settings.trigger（“设置”按钮内容插槽），locale 沿用官方 settings 命名空间以拿到 t()。
+      // settings.trigger 是 single 插槽且已被官方 UI（ui-settings-general, priority 0）占用；
+      // single 插槽的遮蔽规则是「priority 数值最低者渲染」，所以要用比 0 更低的负 priority 才能覆盖官方。
       ctx.slots.inject("settings.trigger", function () {
-        return ctx.slots.register({ name: "settings.trigger", locale: "settings" }, TriggerContent);
+        return ctx.slots.register({ name: "settings.trigger", locale: "settings", priority: -100 }, TriggerContent);
       });
     }
 
