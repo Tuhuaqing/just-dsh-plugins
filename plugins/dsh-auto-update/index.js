@@ -10,13 +10,11 @@ export const name = "dsh-auto-update";
 export const inject = ["timer", "shell", "webServer"];
 
 const PACKAGE = "@deepseek-ai/dsh";
-// 发布通道（npm dist-tag）。检测「最新版」与执行更新都用它，二者始终锁定同一通道：
-//   latest —— 正式发布通道（默认）
-//   next   —— 预发布 / 下一版通道
-//   alpha  —— 内测通道
-// dist-tag 是任意字符串标签，此处不做枚举，故 beta / rc / canary 等（含官方未来新增的）
-// 任意 tag 均自动兼容；只需保证该 tag 在 npm 上确实存在，否则检测会报错而非误报更新。
-const DIST_TAG = "alpha";
+// 「最新版」的定义：不再按 npm dist-tag（latest / next / alpha …）区分通道，
+// 而是取 npm 官方**发布时间最近**的那个版本，无论它属于哪个通道。
+//   例：alpha 通道的 0.1.5-alpha.2 虽是 alpha tag 指向的版本，
+//       但若 0.1.5-rc.2 发布时间更晚，则后者才是「真正的最新版」。
+// 检测到的版本就是会被安装的版本：`npm install -g @deepseek-ai/dsh@<exact-version>`。
 const CHECK_INTERVAL_MS = 30 * 60 * 1000;
 const PORT = 3080;
 
@@ -239,6 +237,8 @@ export function apply(ctx) {
   const state = {
     current: null,
     latest: null,
+    latestTime: null, // 最新版在 npm 上的发布时间（ISO 字符串），用于避免降级
+    currentTime: null, // 当前版本在 npm 上的发布时间（ISO 字符串），可能为 null（本地/未发布版本）
     phase: "checking", // checking | idle | installing | installed | restarting | error
     error: null,
     os: null, // 'windows' | 'macos' | 'linux'
@@ -267,26 +267,65 @@ export function apply(ctx) {
     return normalizeVersion(firstLine(r.stdout));
   }
 
+  // 读取 npm 上该包每个版本的发布时间（{ "0.1.5-rc.2": "2026-09-10T14:57:10.790Z", ... }），
+  // 排除 npm 附带的 created / modified 两个非版本键。任一条目无法解析时跳过。
+  // 返回 { version, time }[]，未做排序。
+  async function readPublishTimes() {
+    const r = await runCommand("npm view " + PACKAGE + " time --json", 60000);
+    if (!r.ok) throw new Error(r.stderr || "npm view time failed");
+    let map;
+    try {
+      map = JSON.parse(r.stdout);
+    } catch (e) {
+      throw new Error("解析 npm time 失败: " + String((e && e.message) || e));
+    }
+    if (!map || typeof map !== "object") throw new Error("npm time 返回非对象");
+    const list = [];
+    for (const key in map) {
+      if (!Object.prototype.hasOwnProperty.call(map, key)) continue;
+      if (key === "created" || key === "modified") continue;
+      const ts = Date.parse(map[key]);
+      if (Number.isNaN(ts)) continue;
+      list.push({ version: normalizeVersion(key), raw: map[key], ts });
+    }
+    if (list.length === 0) throw new Error("npm 未返回任何版本发布时间");
+    return list;
+  }
+
+  // 「最新版」= 发布时间最近的版本（跨所有通道），发布时间相同时用 semver 较高者兜底。
+  // 不再按 dist-tag 通道选择。返回 { version, time } 或抛错。
   async function readLatestVersion() {
-    // 检测与安装保持同一通道：查询 DIST_TAG 当前指向的版本。
-    // npm 把 dist-tag 当作任意字符串标签，故 latest / next / alpha / beta / rc 等
-    // 任意（含未来新增）tag 都自动兼容，无需在此枚举。
-    // 若 DIST_TAG 指向的 tag 不存在，npm view 返回 E404 → runCommand.ok=false → 抛错，
-    // 由 check() 捕获并进入 error 态，而非误报更新。
-    const r = await runCommand("npm view " + PACKAGE + "@" + DIST_TAG + " version", 60000);
-    if (!r.ok) throw new Error(r.stderr || "npm view failed");
-    return normalizeVersion(firstLine(r.stdout));
+    const list = await readPublishTimes();
+    let best = list[0];
+    for (let i = 1; i < list.length; i++) {
+      const cur = list[i];
+      if (cur.ts > best.ts) {
+        best = cur;
+      } else if (cur.ts === best.ts && compareVersions(cur.version, best.version) > 0) {
+        best = cur;
+      }
+    }
+    return { version: best.version, time: best.raw, times: list };
   }
 
   async function check() {
     if (state.phase === "installing") return;
     try {
       state.current = await readCurrentVersion();
-      state.latest = await readLatestVersion();
+      const latest = await readLatestVersion();
+      state.latest = latest.version;
+      state.latestTime = latest.time;
+      // 记录当前版本在 npm 上的发布时间（若当前版本是本地/未发布版本，则为 null）
+      const currentEntry = latest.times.find((x) => x.version === state.current);
+      state.currentTime = currentEntry ? currentEntry.raw : null;
       state.phase = "idle";
       state.error = null;
-      const up = compareVersions(state.latest, state.current) > 0;
-      console.log("[dsh-auto-update] 当前 v" + state.current + "，最新 v" + state.latest + (up ? "，有新版本" : "，已是最新"));
+      const up = updateAvailable();
+      console.log(
+        "[dsh-auto-update] 当前 v" + state.current +
+          "，最新 v" + state.latest + "（发布于 " + state.latestTime + "）" +
+          (up ? "，有新版本" : "，已是最新"),
+      );
     } catch (err) {
       state.phase = "error";
       state.error = String((err && err.message) || err);
@@ -311,15 +350,25 @@ export function apply(ctx) {
     return os;
   }
 
-  const updateAvailable = () =>
-    state.phase === "idle" &&
-    state.latest != null &&
-    state.current != null &&
-    compareVersions(state.latest, state.current) > 0;
+  // 是否有可更新：最新版（发布时间最近者）与当前版不同，且不会导致降级。
+  // 降级判定：当前版本在 npm 上有发布时间时，只有当「最新版发布时间 > 当前版发布时间」才算有更新，
+  // 从而即便当前跑的是发布时间更晚的版本也不会被拉回旧版本；
+  // 若当前版本在 npm 上查不到发布时间（本地/未发布版本），则只要版本号不同即视为可更新。
+  const updateAvailable = () => {
+    if (state.phase !== "idle") return false;
+    if (state.latest == null || state.current == null) return false;
+    if (state.latest === state.current) return false;
+    if (state.currentTime != null && state.latestTime != null) {
+      return Date.parse(state.latestTime) > Date.parse(state.currentTime);
+    }
+    // 当前版本不在 npm 发布记录里：无法按时间比较，只要版本号不同即认为可更新
+    return true;
+  };
 
   const getStatus = () => ({
     current: state.current,
     latest: state.latest,
+    latestTime: state.latestTime,
     updateAvailable: updateAvailable(),
     phase: state.phase,
     error: state.error,
@@ -327,18 +376,23 @@ export function apply(ctx) {
 
   async function installUpdate() {
     if (state.phase === "installing") return { ok: false, error: "更新安装已在进行中" };
+    // 安装的是「发布时间最近」的确切版本，而非某个 dist-tag，避免通道歧义与降级。
+    const target = state.latest;
+    if (!target) return { ok: false, error: "尚未检测到可安装的最新版本" };
     state.phase = "installing";
     state.error = null;
     try {
-      const r = await runCommand("npm install -g " + PACKAGE + "@" + DIST_TAG, 10 * 60 * 1000);
+      const r = await runCommand("npm install -g " + PACKAGE + "@" + target, 10 * 60 * 1000);
       if (!r.ok) throw new Error((r.stderr || "npm install -g failed").trim());
       state.phase = "installed";
       try {
-        state.latest = await readLatestVersion();
+        const latest = await readLatestVersion();
+        state.latest = latest.version;
+        state.latestTime = latest.time;
       } catch (_) {
         /* 刷新失败可忽略 */
       }
-      console.log("[dsh-auto-update] 已安装 v" + state.latest + "，等待重启");
+      console.log("[dsh-auto-update] 已安装 v" + target + "，等待重启");
       return { ok: true };
     } catch (err) {
       state.phase = "idle";

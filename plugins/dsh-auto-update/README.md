@@ -43,11 +43,13 @@ dsh-auto-update/
 
 ## 工作原理
 
-- **版本检查（Host）**：`dsh --version` 读取当前版本；`npm view @deepseek-ai/dsh version`
-  读取 npm 官方 `latest` 通道的最新版本。加载时执行一次，之后 `ctx.interval` 每 30 分钟一次。
+- **版本检查（Host）**：`dsh --version` 读取当前版本；`npm view @deepseek-ai/dsh time --json`
+  读取 npm 上**所有版本的发布时间**，取其中发布时间最近的版本作为「最新版」（跨通道，不区分
+  latest / next / alpha）。加载时执行一次，之后 `ctx.interval` 每 30 分钟一次。
 - **Client ↔ Host 通信**：Host 用 `ctx.webServer.register` 注册 `/dsh-auto-update/api` 路由
   （POST `{method}` → JSON），Client 通过 `fetch()` 调用，方法为 `getStatus` / `installUpdate` / `restart`。
-- **更新**：`installUpdate` 执行 `npm install -g @deepseek-ai/dsh@latest`。
+- **更新**：`installUpdate` 执行 `npm install -g @deepseek-ai/dsh@<最新版确切版本号>`（安装的就是
+  检测到的那个发布时间最近的版本，而非某个 dist-tag）。
 - **重启（跨平台）**：`restart` 先用 `node -p process.platform` 检测操作系统，再按平台选择脚本——
   Linux 用 `setsid + nohup + &`、macOS 用 `nohup + &`（无 setsid）、Windows 用 PowerShell
   （`Get-NetTCPConnection` 结束监听进程 + `Start-Process` 拉起新进程），均以脱离父进程的方式后台运行，
@@ -62,10 +64,10 @@ dsh-auto-update/
 
 ## 注意事项
 
-- 「最新版本」取自 npm 的 `DIST_TAG` dist-tag（默认 `latest`），检测与安装始终锁定同一通道：
-  即检测到的版本，就是 `npm install -g @deepseek-ai/dsh@<DIST_TAG>` 会安装的版本。
-  改 `index.js` 中的 `DIST_TAG` 即可切换通道，例如 `next`（预发布）、`alpha`（内测）；
-  dist-tag 是任意字符串标签，`beta` / `rc` 等（含官方未来新增的）也自动兼容，
-  只需保证该 tag 在 npm 上确实存在，否则检测会报错而非误报更新。
-- 版本比较使用 semver（`compareVersions`）：仅当 `latest > current`（最新版更高）时才提示更新，
-  避免跨通道 / 预发布导致的降级。
+- 「最新版本」= npm 上**发布时间最近**的版本，跨所有通道选取，不再按 dist-tag
+  （latest / next / alpha …）区分通道。例如 alpha 通道的 `0.1.5-alpha.2` 虽是 `alpha` tag
+  指向的版本，但若 `0.1.5-rc.2` 发布时间更晚，则后者才是「真正的最新版」，检测与安装都取它。
+  检测到的版本就是会被安装的版本：`npm install -g @deepseek-ai/dsh@<该确切版本号>`。
+- 防降级：当前版本在 npm 上有发布记录时，只有当「最新版发布时间 > 当前版发布时间」才提示更新，
+  即便当前跑的是发布时间更晚的版本也不会被拉回旧版本；若当前版本在 npm 上查不到发布时间
+  （本地 / 未发布版本），则只要版本号不同即视为可更新。
