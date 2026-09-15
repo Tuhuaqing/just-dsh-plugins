@@ -15,13 +15,13 @@
 
 ## 安装
 
-发布到 npm 后：
+从 npm 安装：
 
 ```bash
-dsh plugin --profile web add dsh-auto-update
+dsh plugin --profile web add @just-ai/dsh-auto-update
 ```
 
-本地开发可直接用路径安装（从仓库根目录执行）：
+从本地安装（从仓库根目录执行）：
 
 ```bash
 dsh plugin --profile web add ./plugins/dsh-auto-update
